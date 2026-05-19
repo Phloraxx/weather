@@ -1,28 +1,47 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
-const BASE = 'https://api.openweathermap.org/data/2.5';
-
-const conditions = {
-  Thunderstorm: { bg: 'thunderstorm', icon: '11d' },
-  Drizzle: { bg: 'drizzle', icon: '09d' },
-  Rain: { bg: 'rain', icon: '10d' },
-  Snow: { bg: 'snow', icon: '13d' },
-  Mist: { bg: 'mist', icon: '50d' },
-  Smoke: { bg: 'mist', icon: '50d' },
-  Haze: { bg: 'mist', icon: '50d' },
-  Dust: { bg: 'mist', icon: '50d' },
-  Fog: { bg: 'mist', icon: '50d' },
-  Clear: { bg: 'clear', icon: '01d' },
-  Clouds: { bg: 'clouds', icon: '02d' },
+const weatherCodes = {
+  0: { label: 'Clear sky', bg: 'clear', icon: '01d' },
+  1: { label: 'Mainly clear', bg: 'clear', icon: '01d' },
+  2: { label: 'Partly cloudy', bg: 'clouds', icon: '02d' },
+  3: { label: 'Overcast', bg: 'clouds', icon: '04d' },
+  45: { label: 'Foggy', bg: 'mist', icon: '50d' },
+  48: { label: 'Depositing rime fog', bg: 'mist', icon: '50d' },
+  51: { label: 'Light drizzle', bg: 'drizzle', icon: '09d' },
+  53: { label: 'Moderate drizzle', bg: 'drizzle', icon: '09d' },
+  55: { label: 'Dense drizzle', bg: 'drizzle', icon: '09d' },
+  56: { label: 'Light freezing drizzle', bg: 'drizzle', icon: '09d' },
+  57: { label: 'Dense freezing drizzle', bg: 'drizzle', icon: '09d' },
+  61: { label: 'Slight rain', bg: 'rain', icon: '10d' },
+  63: { label: 'Moderate rain', bg: 'rain', icon: '10d' },
+  65: { label: 'Heavy rain', bg: 'rain', icon: '10d' },
+  66: { label: 'Light freezing rain', bg: 'rain', icon: '10d' },
+  67: { label: 'Heavy freezing rain', bg: 'rain', icon: '10d' },
+  71: { label: 'Slight snow', bg: 'snow', icon: '13d' },
+  73: { label: 'Moderate snow', bg: 'snow', icon: '13d' },
+  75: { label: 'Heavy snow', bg: 'snow', icon: '13d' },
+  77: { label: 'Snow grains', bg: 'snow', icon: '13d' },
+  80: { label: 'Slight rain showers', bg: 'rain', icon: '09d' },
+  81: { label: 'Moderate rain showers', bg: 'rain', icon: '09d' },
+  82: { label: 'Violent rain showers', bg: 'rain', icon: '09d' },
+  85: { label: 'Slight snow showers', bg: 'snow', icon: '13d' },
+  86: { label: 'Heavy snow showers', bg: 'snow', icon: '13d' },
+  95: { label: 'Thunderstorm', bg: 'thunderstorm', icon: '11d' },
+  96: { label: 'Thunderstorm with slight hail', bg: 'thunderstorm', icon: '11d' },
+  99: { label: 'Thunderstorm with heavy hail', bg: 'thunderstorm', icon: '11d' },
 };
 
-function getCondition(main) {
-  return conditions[main] || { bg: 'default', icon: '01d' };
+function getCondition(code) {
+  return weatherCodes[code] || { label: 'Unknown', bg: 'default', icon: '01d' };
 }
 
-function dayName(timestamp) {
-  return new Date(timestamp * 1000).toLocaleDateString('en-US', { weekday: 'short' });
+function dayName(dateStr) {
+  const today = new Date();
+  const date = new Date(dateStr);
+  const diff = date.getDate() - today.getDate();
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  return date.toLocaleDateString('en-US', { weekday: 'short' });
 }
 
 function App() {
@@ -37,31 +56,52 @@ function App() {
   });
 
   const fetchWeather = useCallback(async (city) => {
-    if (!API_KEY || API_KEY === 'your_api_key_here') {
-      setError('Set your OpenWeather API key in the .env file');
-      return;
-    }
     setLoading(true);
     setError('');
     try {
-      const [wRes, fRes] = await Promise.all([
-        fetch(`${BASE}/weather?q=${encodeURIComponent(city)}&units=metric&appid=${API_KEY}`),
-        fetch(`${BASE}/forecast?q=${encodeURIComponent(city)}&units=metric&appid=${API_KEY}`),
-      ]);
-      if (!wRes.ok) {
-        const msg = wRes.status === 404 ? 'City not found' : 'Failed to load weather';
-        setError(msg);
+      const geoRes = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
+      );
+      if (!geoRes.ok) throw new Error('Geocoding failed');
+      const geoData = await geoRes.json();
+      if (!geoData.results?.length) {
+        setError('City not found');
         setLoading(false);
         return;
       }
-      const wData = await wRes.json();
-      const fData = await fRes.json();
-      setWeather(wData);
-      const daily = fData.list.filter((item) =>
-        item.dt_txt.includes('12:00:00')
-      ).slice(0, 5);
-      setForecast(daily.length ? daily : fData.list.filter((_, i) => i % 8 === 0).slice(0, 5));
-      updateRecent(wData.name);
+      const { name, country, latitude, longitude } = geoData.results[0];
+
+      const weatherRes = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,pressure_msl&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=6`
+      );
+      if (!weatherRes.ok) throw new Error('Weather fetch failed');
+      const data = await weatherRes.json();
+
+      const cond = getCondition(data.current.weather_code);
+      setWeather({
+        city: name,
+        country,
+        temp: Math.round(data.current.temperature_2m),
+        feelsLike: Math.round(data.current.apparent_temperature),
+        humidity: data.current.relative_humidity_2m,
+        wind: Math.round(data.current.wind_speed_10m),
+        pressure: data.current.pressure_msl,
+        cond: cond.label,
+        icon: cond.icon,
+        bg: cond.bg,
+      });
+
+      const daily = data.daily;
+      setForecast(
+        daily.time.slice(1, 6).map((time, i) => ({
+          day: dayName(time),
+          icon: getCondition(daily.weather_code[i + 1]).icon,
+          high: Math.round(daily.temperature_2m_max[i + 1]),
+          low: Math.round(daily.temperature_2m_min[i + 1]),
+        }))
+      );
+
+      updateRecent(name);
     } catch {
       setError('Network error. Check your connection.');
     }
@@ -88,10 +128,10 @@ function App() {
     fetchWeather(city);
   }
 
-  const cond = weather ? getCondition(weather.weather[0].main) : null;
+  const cond = weather?.bg || 'default';
 
   return (
-    <div className={`app ${cond ? cond.bg : 'default'}`}>
+    <div className={`app ${cond}`}>
       <div className="app-bg"></div>
 
       <div className="container">
@@ -123,15 +163,15 @@ function App() {
               <div className="current-main">
                 <img
                   className="current-icon"
-                  src={`https://openweathermap.org/img/wn/${weather.weather[0].icon}@4x.png`}
-                  alt={weather.weather[0].description}
+                  src={`https://openweathermap.org/img/wn/${weather.icon}@4x.png`}
+                  alt={weather.cond}
                 />
-                <div className="current-temp">{Math.round(weather.main.temp)}</div>
+                <div className="current-temp">{weather.temp}</div>
                 <div className="current-unit">°C</div>
               </div>
               <div className="current-info">
-                <h1 className="current-city">{weather.name}</h1>
-                <p className="current-desc">{weather.weather[0].description}</p>
+                <h1 className="current-city">{weather.city}</h1>
+                <p className="current-desc">{weather.cond}</p>
               </div>
             </div>
 
@@ -141,22 +181,21 @@ function App() {
                   <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
                 </svg>
                 <span className="detail-label">Feels Like</span>
-                <span className="detail-value">{Math.round(weather.main.feels_like)}°</span>
+                <span className="detail-value">{weather.feelsLike}°</span>
               </div>
               <div className="detail">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                  <path d="M12 2v20"/>
-                  <path d="M2 12h20"/>
+                  <path d="M12 2v20 M2 12h20"/>
                 </svg>
                 <span className="detail-label">Humidity</span>
-                <span className="detail-value">{weather.main.humidity}%</span>
+                <span className="detail-value">{weather.humidity}%</span>
               </div>
               <div className="detail">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                   <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/>
                 </svg>
                 <span className="detail-label">Wind</span>
-                <span className="detail-value">{Math.round(weather.wind.speed)} km/h</span>
+                <span className="detail-value">{weather.wind} km/h</span>
               </div>
               <div className="detail">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -165,7 +204,7 @@ function App() {
                   <line x1="12" y1="17" x2="12" y2="21"/>
                 </svg>
                 <span className="detail-label">Pressure</span>
-                <span className="detail-value">{weather.main.pressure} hPa</span>
+                <span className="detail-value">{weather.pressure} hPa</span>
               </div>
             </div>
 
@@ -175,15 +214,15 @@ function App() {
                 <div className="forecast-grid">
                   {forecast.map((day, i) => (
                     <div key={i} className="forecast-day">
-                      <span className="forecast-day-name">{i === 0 ? 'Today' : dayName(day.dt)}</span>
+                      <span className="forecast-day-name">{day.day}</span>
                       <img
                         className="forecast-icon"
-                        src={`https://openweathermap.org/img/wn/${day.weather[0].icon}.png`}
-                        alt={day.weather[0].description}
+                        src={`https://openweathermap.org/img/wn/${day.icon}.png`}
+                        alt=""
                       />
                       <div className="forecast-temps">
-                        <span className="forecast-high">{Math.round(day.main.temp_max)}°</span>
-                        <span className="forecast-low">{Math.round(day.main.temp_min)}°</span>
+                        <span className="forecast-high">{day.high}°</span>
+                        <span className="forecast-low">{day.low}°</span>
                       </div>
                     </div>
                   ))}
