@@ -1,43 +1,25 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 
-const weatherCodes = {
-  0: { label: 'Clear sky', bg: 'clear', icon: '01d' },
-  1: { label: 'Mainly clear', bg: 'clear', icon: '01d' },
-  2: { label: 'Partly cloudy', bg: 'clouds', icon: '02d' },
-  3: { label: 'Overcast', bg: 'clouds', icon: '04d' },
-  45: { label: 'Foggy', bg: 'mist', icon: '50d' },
-  48: { label: 'Depositing rime fog', bg: 'mist', icon: '50d' },
-  51: { label: 'Light drizzle', bg: 'drizzle', icon: '09d' },
-  53: { label: 'Moderate drizzle', bg: 'drizzle', icon: '09d' },
-  55: { label: 'Dense drizzle', bg: 'drizzle', icon: '09d' },
-  56: { label: 'Light freezing drizzle', bg: 'drizzle', icon: '09d' },
-  57: { label: 'Dense freezing drizzle', bg: 'drizzle', icon: '09d' },
-  61: { label: 'Slight rain', bg: 'rain', icon: '10d' },
-  63: { label: 'Moderate rain', bg: 'rain', icon: '10d' },
-  65: { label: 'Heavy rain', bg: 'rain', icon: '10d' },
-  66: { label: 'Light freezing rain', bg: 'rain', icon: '10d' },
-  67: { label: 'Heavy freezing rain', bg: 'rain', icon: '10d' },
-  71: { label: 'Slight snow', bg: 'snow', icon: '13d' },
-  73: { label: 'Moderate snow', bg: 'snow', icon: '13d' },
-  75: { label: 'Heavy snow', bg: 'snow', icon: '13d' },
-  77: { label: 'Snow grains', bg: 'snow', icon: '13d' },
-  80: { label: 'Slight rain showers', bg: 'rain', icon: '09d' },
-  81: { label: 'Moderate rain showers', bg: 'rain', icon: '09d' },
-  82: { label: 'Violent rain showers', bg: 'rain', icon: '09d' },
-  85: { label: 'Slight snow showers', bg: 'snow', icon: '13d' },
-  86: { label: 'Heavy snow showers', bg: 'snow', icon: '13d' },
-  95: { label: 'Thunderstorm', bg: 'thunderstorm', icon: '11d' },
-  96: { label: 'Thunderstorm with slight hail', bg: 'thunderstorm', icon: '11d' },
-  99: { label: 'Thunderstorm with heavy hail', bg: 'thunderstorm', icon: '11d' },
+const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
+const BASE = 'https://api.openweathermap.org/data/2.5';
+
+const bgMap = {
+  Thunderstorm: 'thunderstorm',
+  Drizzle: 'drizzle',
+  Rain: 'rain',
+  Snow: 'snow',
+  Atmosphere: 'mist',
+  Clear: 'clear',
+  Clouds: 'clouds',
 };
 
-function getCondition(code) {
-  return weatherCodes[code] || { label: 'Unknown', bg: 'default', icon: '01d' };
+function getBg(main) {
+  return bgMap[main] || 'default';
 }
 
-function dayName(dateStr) {
+function dayName(dt) {
+  const date = new Date(dt * 1000);
   const today = new Date();
-  const date = new Date(dateStr);
   const diff = date.getDate() - today.getDate();
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Tomorrow';
@@ -59,49 +41,48 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const geoRes = await fetch(
-        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
+      const wRes = await fetch(
+        `${BASE}/weather?q=${encodeURIComponent(city)}&units=metric&appid=${API_KEY}`
       );
-      if (!geoRes.ok) throw new Error('Geocoding failed');
-      const geoData = await geoRes.json();
-      if (!geoData.results?.length) {
-        setError('City not found');
+      if (!wRes.ok) {
+        setError(wRes.status === 404 ? 'City not found' : 'Failed to load weather');
         setLoading(false);
         return;
       }
-      const { name, country, latitude, longitude } = geoData.results[0];
+      const wData = await wRes.json();
 
-      const weatherRes = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,pressure_msl&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=6`
+      const fRes = await fetch(
+        `${BASE}/forecast?q=${encodeURIComponent(city)}&units=metric&appid=${API_KEY}`
       );
-      if (!weatherRes.ok) throw new Error('Weather fetch failed');
-      const data = await weatherRes.json();
+      const fData = await fRes.json();
 
-      const cond = getCondition(data.current.weather_code);
+      const main = wData.weather[0].main;
       setWeather({
-        city: name,
-        country,
-        temp: Math.round(data.current.temperature_2m),
-        feelsLike: Math.round(data.current.apparent_temperature),
-        humidity: data.current.relative_humidity_2m,
-        wind: Math.round(data.current.wind_speed_10m),
-        pressure: data.current.pressure_msl,
-        cond: cond.label,
-        icon: cond.icon,
-        bg: cond.bg,
+        city: wData.name,
+        country: wData.sys.country,
+        temp: Math.round(wData.main.temp),
+        feelsLike: Math.round(wData.main.feels_like),
+        humidity: wData.main.humidity,
+        wind: Math.round(wData.wind.speed),
+        pressure: wData.main.pressure,
+        desc: wData.weather[0].description,
+        icon: wData.weather[0].icon,
+        bg: getBg(main),
       });
 
-      const daily = data.daily;
+      const daily = fData.list.filter((item) =>
+        item.dt_txt.includes('12:00:00')
+      ).slice(0, 5);
       setForecast(
-        daily.time.slice(1, 6).map((time, i) => ({
-          day: dayName(time),
-          icon: getCondition(daily.weather_code[i + 1]).icon,
-          high: Math.round(daily.temperature_2m_max[i + 1]),
-          low: Math.round(daily.temperature_2m_min[i + 1]),
+        (daily.length ? daily : fData.list.filter((_, i) => i % 8 === 0).slice(0, 5)).map((day) => ({
+          day: dayName(day.dt),
+          icon: day.weather[0].icon,
+          high: Math.round(day.main.temp_max),
+          low: Math.round(day.main.temp_min),
         }))
       );
 
-      updateRecent(name);
+      updateRecent(wData.name);
     } catch {
       setError('Network error. Check your connection.');
     }
@@ -164,14 +145,14 @@ function App() {
                 <img
                   className="current-icon"
                   src={`https://openweathermap.org/img/wn/${weather.icon}@4x.png`}
-                  alt={weather.cond}
+                  alt={weather.desc}
                 />
                 <div className="current-temp">{weather.temp}</div>
                 <div className="current-unit">°C</div>
               </div>
               <div className="current-info">
                 <h1 className="current-city">{weather.city}</h1>
-                <p className="current-desc">{weather.cond}</p>
+                <p className="current-desc">{weather.desc}</p>
               </div>
             </div>
 
